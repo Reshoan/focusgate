@@ -1,0 +1,17 @@
+[Unit]
+Description=FocusGate path-level blocking proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=focusgate
+ExecStartPre=+/opt/focus-gate/fw.sh up
+ExecStart=/opt/focus-gate/venv/bin/mitmdump -q --mode transparent --listen-port 8443 --set confdir=/var/lib/focusgate/mitmproxy --allow-hosts '^(.+\.)?(youtube\.com|instagram\.com)(:443)?$' -s /opt/focus-gate/gate.py
+ExecStopPost=+/opt/focus-gate/fw.sh down
+Restart=always
+RestartSec=2
+AmbientCapabilities=
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
