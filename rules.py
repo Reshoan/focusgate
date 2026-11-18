@@ -16,6 +16,16 @@ RULES = {
             r"^/hashtag/",
             r"^/(@[^/]+|c/[^/]+|channel/[^/]+|user/[^/]+)/shorts",  # channel Shorts tab
         ],
+        # Hide the watch-page recommendations/end cards and turn autoplay off.
+        "css": (
+            "#related,ytd-watch-next-secondary-results-renderer,.ytp-endscreen-content,.ytp-ce-element,"
+            ".ytp-autonav-endscreen-countdown-overlay,.ytp-autonav-endscreen-upnext-container,"
+            ".ytp-suggestion-set,.ytp-videowall-still{display:none!important}"
+        ),
+        "js": (
+            "function fgOff(){var b=document.querySelector('.ytp-autonav-toggle-button[aria-checked=\"true\"]');if(b)b.click();}"
+            "setInterval(fgOff,1000);addEventListener('yt-navigate-finish',fgOff);"
+        ),
     },
     "instagram": {
         "mode": "allow",
@@ -24,12 +34,46 @@ RULES = {
             r"^/accounts/",                                       # login / settings
             r"^/challenge/",
             r"^/(api|graphql|ajax|static|web|data|rsrc\.php)(/|$)",
+            r"^/(p|reel|tv)/[^/]+",                               # a single post / reel someone sent
+            r"^/[^/]+/(p|reel)/[^/]+",                            # same, via a profile
+            r"^/stories/[^/]+",                                   # stories
+            # individual profiles (root only: /name/), excluding feed-like top-level pages
+            r"^/(?!(?:explore|reels|reel|p|tv|direct|accounts|stories|challenge|api|graphql|ajax|static|web|data"
+            r"|about|legal|privacy|developer|directory|emailsignup|oauth)(?:/|$))[A-Za-z0-9._]+/?$",
         ],
         "redirect": "/direct/inbox/",
+        # non-navigation requests blocked outright (best effort; Instagram mostly uses GraphQL)
+        "api_block": [r"^/api/v1/(web/search|fbsearch|discover|explore)"],
+    },
+    "facebook": {
+        "mode": "allow",
+        # Patterns are tested against both "/path" and "/path?query".
+        "patterns": [
+            r"^/messages(/|$)",                                   # messages
+            r"^/notifications(/|$)",                              # notifications
+            r"^/(login|logout|checkpoint|recover|two_step_verification|device-based|auth_platform|confirmemail|cookie)",
+            r"^/(api|ajax|rsrc\.php|common|security|platform|si)(/|$)",
+            r"^/permalink\.php",                                  # posts
+            r"^/story\.php",
+            r"^/photo(\.php|/)",
+            r"^/[^/]+/(posts|videos|photos)/[^/]+",
+            r"^/groups/[^/]+/(posts|permalink)/[^/]+",
+            r"^/share/[a-z]/[^/]+",                               # shared-post links
+            r"^/reel/\d+",                                        # a single reel
+            r"^/watch/?\?(?:.*&)?v=",                             # a single video (not the Watch feed)
+            r"^/profile\.php\?(?:.*&)?id=\d+",                    # profile by numeric id
+            # individual profiles (root only), excluding feed-like top-level pages
+            r"^/(?!(?:home\.php|watch|reel|reels|marketplace|gaming|groups|pages|events|friends|bookmarks|search|saved"
+            r"|stories|fundraisers|ads|jobs|memories|feeds|login|logout|notifications|messages|photo|permalink\.php"
+            r"|story\.php|profile\.php|share|help|policies|privacy)(?:/|$))[A-Za-z0-9.]+/?$",
+        ],
+        "redirect": "/messages/",
     },
 }
 
 _COMPILED = {k: [re.compile(p) for p in v["patterns"]] for k, v in RULES.items()}
+_API_BLOCK = {k: [re.compile(p) for p in v.get("api_block", [])] for k, v in RULES.items()}
+_FB_HOSTS = {"facebook.com", "www.facebook.com", "m.facebook.com", "web.facebook.com", "mbasic.facebook.com"}
 
 
 def _host_is(host: str, base: str) -> bool:
@@ -42,13 +86,25 @@ def site_of(host: str):
         return "youtube"
     if _host_is(host, "instagram.com"):
         return "instagram"
+    if host.lower().split(":")[0] in _FB_HOSTS:
+        return "facebook"
     return None
 
 
+def _targets(path: str):
+    u = urlsplit(path)
+    p = u.path or "/"
+    return [p, p + "?" + u.query] if u.query else [p]
+
+
 def is_blocked(site: str, path: str) -> bool:
-    p = urlsplit(path).path or "/"
-    hit = any(rx.search(p) for rx in _COMPILED[site])
+    hit = any(rx.search(t) for rx in _COMPILED[site] for t in _targets(path))
     return hit if RULES[site]["mode"] == "block" else not hit
+
+
+def is_api_blocked(site: str, path: str) -> bool:
+    p = urlsplit(path).path
+    return any(rx.search(p) for rx in _API_BLOCK[site])
 
 
 BLOCKED_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Blocked</title>
@@ -62,7 +118,7 @@ button{font-size:1.1rem;padding:.6rem 1rem;border-radius:6px;border:0;background
 
 GUARD_JS = """(function(){
 var R=%s;
-function bad(p){var h=R.patterns.some(function(s){return new RegExp(s).test(p)});return R.mode==="block"?h:!h}
+function bad(p){var t=[p];if(location.search)t.push(p+location.search);var h=R.patterns.some(function(s){var r=new RegExp(s);return t.some(function(x){return r.test(x)})});return R.mode==="block"?h:!h}
 function check(){
   if(!bad(location.pathname))return;
   try{var n=+(sessionStorage.getItem("fg_n")||0);var t=+(sessionStorage.getItem("fg_t")||0);
@@ -79,3 +135,13 @@ setInterval(check,400);check();
 def guard_script(site: str) -> str:
     r = RULES[site]
     return GUARD_JS % json.dumps({"mode": r["mode"], "patterns": r["patterns"]})
+
+
+def inject_html(site: str) -> str:
+    """Everything injected into the <head> of a page on this site."""
+    r = RULES[site]
+    out = ""
+    if r.get("css"):
+        out += "<style>" + r["css"] + "</style>"
+    out += "<script>" + guard_script(site) + (r.get("js") or "") + "</script>"
+    return out

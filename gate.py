@@ -14,7 +14,12 @@ def _is_document(req: http.Request) -> bool:
 class Gate:
     def request(self, flow: http.HTTPFlow):
         site = rules.site_of(flow.request.pretty_host)
-        if not site or not _is_document(flow.request):
+        if not site:
+            return
+        if not _is_document(flow.request):
+            if rules.is_api_blocked(site, flow.request.path):
+                flow.metadata["focusgate_blocked"] = True
+                flow.response = http.Response.make(403, b"blocked by FocusGate", {"Content-Type": "text/plain"})
             return
         if not rules.is_blocked(site, flow.request.path):
             return
@@ -40,7 +45,7 @@ class Gate:
             return
         for h in ("content-security-policy", "content-security-policy-report-only"):
             flow.response.headers.pop(h, None)
-        tag = "<script>" + rules.guard_script(site) + "</script>"
+        tag = rules.inject_html(site)
         i = text.lower().find("<head")
         j = text.find(">", i) + 1 if i != -1 else 0
         flow.response.text = text[:j] + tag + text[j:]

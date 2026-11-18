@@ -1,7 +1,10 @@
 # FocusGate
 
 Path-level website blocking for Linux that is hard to bypass from the browser.
-Example setup: block the YouTube homepage, feed and Shorts but keep search and videos; allow only Instagram DMs.
+Current rules (edit `rules.py`):
+- **YouTube:** homepage, feeds and Shorts blocked; search and videos work. On watch pages the sidebar recommendations and end cards are hidden and autoplay is switched off.
+- **Instagram:** only messages, single posts/reels, stories and individual profiles. Feed, Explore and the Reels feed are blocked.
+- **Facebook:** only messages, notifications, individual profiles and single posts/videos/reels. Home, Reels, Watch, Marketplace, Groups etc. are blocked.
 
 ## How it works
 - A mitmproxy (`gate.py`) runs as a dedicated system user (`focusgate`) and sees full HTTPS URLs.
@@ -27,7 +30,8 @@ sudo install -m 644 rules.py gate.py /opt/focus-gate/ && sudo systemctl restart 
 - Installs a local CA into the system store, Firefox and the Chromium NSS db so the proxy can read HTTPS. The key is readable only by the `focusgate` user.
 - Anyone with sudo can still run `systemctl stop focusgate`. Remove yourself from sudo to close that.
 - Redirects all port-443 traffic through the proxy; non-target hosts pass through untouched.
-- Instagram's internals change; the in-page guard may need rule tweaks over time.
+- Instagram and Facebook change their internals often; the in-page guard and the YouTube sidebar/autoplay selectors may need tweaks over time.
+- Hiding the YouTube sidebar and autoplay works by editing the page, so it depends on YouTube's current element names.
 
 ## Uninstall
 ```bash

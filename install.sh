@@ -39,5 +39,6 @@ for db in $(find "$REAL_HOME/.mozilla/firefox" "$REAL_HOME/snap/firefox/common/.
 done
 
 systemctl daemon-reload
-systemctl enable --now focusgate
+systemctl enable focusgate
+systemctl restart focusgate
 echo "Done. Fully restart your browsers. Check: focusgate status"
