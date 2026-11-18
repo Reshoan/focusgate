@@ -55,10 +55,15 @@ RULES = {
             r"^/(api|ajax|rsrc\.php|common|security|platform|si)(/|$)",
             r"^/permalink\.php",                                  # posts
             r"^/story\.php",
-            r"^/photo(\.php|/)",
+            r"^/photo(\.php|/|$)",
+            r"^/media/set",
+            r"^/video(\.php|s/)",                                # standalone videos
+            r"^/[^/]+/reels?/[^/]+",                              # a page's single reel
+            r"^/marketplace/item/",                               # a shared listing
+            r"^/events/\d+",
             r"^/[^/]+/(posts|videos|photos)/[^/]+",
             r"^/groups/[^/]+/(posts|permalink)/[^/]+",
-            r"^/share/[a-z]/[^/]+",                               # shared-post links
+            r"^/share/",                                          # all shared-link formats
             r"^/reel/\d+",                                        # a single reel
             r"^/watch/?\?(?:.*&)?v=",                             # a single video (not the Watch feed)
             r"^/profile\.php\?(?:.*&)?id=\d+",                    # profile by numeric id

@@ -24,6 +24,7 @@ class Gate:
         if not rules.is_blocked(site, flow.request.path):
             return
         flow.metadata["focusgate_blocked"] = True
+        print(f"BLOCKED {site} {flow.request.pretty_host}{flow.request.path[:200]}", flush=True)
         redirect = rules.RULES[site].get("redirect")
         if redirect:
             flow.response = http.Response.make(302, b"", {"Location": redirect, "Cache-Control": "no-store"})
