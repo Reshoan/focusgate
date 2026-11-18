@@ -1,7 +1,21 @@
 """mitmproxy addon: block configured paths on YouTube/Instagram and inject a guard script for in-page (SPA) navigation."""
+import os
+import time
+
 from mitmproxy import http
 
 import rules
+
+
+LOG = os.environ.get("FOCUSGATE_LOG", "/var/lib/focusgate/blocked.log")
+
+
+def _log(site: str, req: http.Request):
+    try:
+        with open(LOG, "a") as f:
+            f.write(f"{time.strftime('%F %T')} {site} {req.pretty_host}{req.path[:200]}\n")
+    except OSError:
+        pass
 
 
 def _is_document(req: http.Request) -> bool:
@@ -24,7 +38,7 @@ class Gate:
         if not rules.is_blocked(site, flow.request.path):
             return
         flow.metadata["focusgate_blocked"] = True
-        print(f"BLOCKED {site} {flow.request.pretty_host}{flow.request.path[:200]}", flush=True)
+        _log(site, flow.request)
         redirect = rules.RULES[site].get("redirect")
         if redirect:
             flow.response = http.Response.make(302, b"", {"Location": redirect, "Cache-Control": "no-store"})
