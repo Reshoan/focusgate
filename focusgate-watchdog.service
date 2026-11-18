@@ -1,0 +1,6 @@
+[Unit]
+Description=FocusGate watchdog (restores the blocker unless a halt was authorized)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/focus-gate/watchdog.sh

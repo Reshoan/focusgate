@@ -1,22 +1,200 @@
 #!/usr/bin/env python3
-"""focusgate status|stop|start — stopping requires a typing challenge (friction against impulse)."""
-import os, random, string, subprocess, sys, time
+"""focusgate status | start | stop | emergency
 
-def sh(*a): return subprocess.run(a).returncode
+stop       halts FocusGate after a random 5-15 minute wait (with reminders why you shouldn't).
+emergency  halts it right away, but only after typing a generated pledge word for word (takes 3+ minutes).
+Either way the halt lasts until the next reboot, when the service comes back by itself.
+"""
+import fcntl
+import os
+import random
+import subprocess
+import sys
+import time
 
-cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
-if cmd == "status":
-    sys.exit(sh("systemctl", "status", "focusgate", "--no-pager"))
-if cmd == "start":
-    sys.exit(sh("systemctl", "start", "focusgate"))
-if cmd == "stop":
-    if os.geteuid() != 0: sys.exit("run with sudo")
-    print("Stopping FocusGate re-enables the distracting parts of YouTube/Instagram.")
-    print("Wait 60 seconds, then type the text below exactly.")
-    time.sleep(60)
-    words = ["".join(random.choices(string.ascii_lowercase, k=random.randint(4, 8))) for _ in range(25)]
-    challenge = " ".join(words)
-    print("\n" + challenge + "\n")
-    if input("> ").strip() != challenge: sys.exit("Mismatch. Still blocked.")
-    sys.exit(sh("systemctl", "stop", "focusgate"))
-sys.exit("usage: focusgate status|start|stop")
+STATE = "/run/focusgate"            # tmpfs: wiped on reboot, which is what re-arms FocusGate
+TOKEN = STATE + "/stop-allowed"     # watchdog leaves the service alone while this exists
+LOCK = STATE + "/stop.lock"
+EVENTS = "/var/lib/focusgate/events.log"
+MIN_WAIT, MAX_WAIT = 5 * 60, 15 * 60
+MIN_PLEDGE_SECONDS = 3 * 60
+
+REMINDERS = [
+    "You turned this on for a reason. Remember what it was.",
+    "The urge to switch this off usually passes in about ten minutes. Give it the ten minutes.",
+    "Is there something you were avoiding just now?",
+    "Future you is going to be glad you waited.",
+    "Take a breath. Stand up, stretch, get a glass of water.",
+    "Whatever is on the other side of that block will still be there later, and it won't be any more urgent.",
+    "Five minutes of scrolling is never five minutes.",
+    "What would you rather be doing with this hour?",
+    "You can cancel right now with Ctrl+C. Nothing is lost.",
+    "A craving is not a decision. Let it pass.",
+    "You decided this when you were thinking clearly. Trust that version of you.",
+    "Is it a real need, or just a habit looking for a door?",
+    "The tutorial you actually need is not behind the homepage.",
+    "Get back to the thing you were doing before this itch started.",
+    "Every minute you wait is a minute you did not give away.",
+]
+
+PLEDGE = [
+    "I promise that I will not waste my time today on things that do not matter to me.",
+    "I understand that I turned on this blocker because I knew I would be tempted.",
+    "I know that scrolling feeds and short videos are designed to keep me watching for as long as possible.",
+    "I will use the internet to learn, to talk to people I care about, and to get things done.",
+    "I accept that an urgent feeling is not the same thing as an urgent need.",
+    "If I only need one specific thing, I will look for that one thing and then I will leave.",
+    "I will not open one more video just because it is waiting for me at the end of this one.",
+    "I will not let a quick check turn into an hour that I cannot get back.",
+    "I am choosing to turn this off knowing that my time is the most valuable thing I own.",
+    "I will pay attention to how I feel when I close the page, and I will remember it.",
+    "I will finish what I came to do before I look at anything else.",
+    "I will not reward the impulse to escape from work that feels difficult.",
+    "I know that the first minute is the hardest, and I am willing to sit through it.",
+    "I promise to stop as soon as I have what I came for.",
+    "I will not tell myself that I deserve a break when what I really want is to avoid something.",
+    "If I find myself drifting, I will close the tab and go back to what matters.",
+    "I understand that attention is limited, and I will spend mine on purpose.",
+    "I will not pretend that this is research when it is only a distraction.",
+    "I promise to be honest with myself about why I am doing this.",
+    "I will turn the blocker back on the moment my emergency is over.",
+    "I am typing every word of this pledge because I want to slow down and think.",
+    "I know that the people and goals I care about do not live inside an endless feed.",
+    "I will not let a habit make my decisions for me.",
+    "I am the one in charge of how this day goes, and I intend to use it well.",
+    "I will remember that tomorrow I will wish I had spent today differently.",
+    "I promise that this is a real emergency and not a way of giving in.",
+    "I will leave the feed alone and only go where I truly need to go.",
+    "I understand that wasting time does not feel like a loss until the day is already gone.",
+]
+
+
+def run(*args):
+    return subprocess.run(args).returncode
+
+
+def event(msg):
+    try:
+        with open(EVENTS, "a") as f:
+            f.write(f"{time.strftime('%F %T')} {msg}\n")
+    except OSError:
+        pass
+
+
+def need_root():
+    if os.geteuid() != 0:
+        sys.exit("Run this with sudo.")
+
+
+def halt():
+    """Authorize the halt (so the watchdog stands down) and stop the service until reboot."""
+    os.makedirs(STATE, mode=0o755, exist_ok=True)
+    open(TOKEN, "w").close()
+    rc = run("systemctl", "stop", "focusgate")
+    print("\nFocusGate is halted. It will come back automatically after your next reboot.")
+    return rc
+
+
+def take_lock():
+    os.makedirs(STATE, mode=0o755, exist_ok=True)
+    f = open(LOCK, "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        sys.exit("Another stop request is already running.")
+    return f
+
+
+def cmd_stop():
+    need_root()
+    lock = take_lock()  # noqa: F841  (held until exit; stops parallel timers)
+    delay = random.randint(MIN_WAIT, MAX_WAIT)
+    start = time.time()
+    event(f"stop requested, waiting {delay}s")
+    print("FocusGate will halt after a random wait of between 5 and 15 minutes.")
+    print("Press Ctrl+C at any time to cancel and keep it on.\n")
+    queue = []
+    try:
+        while time.time() - start < delay:
+            if not queue:
+                queue = random.sample(REMINDERS, len(REMINDERS))
+            print(f"[{int((time.time() - start) // 60)} min] {queue.pop()}", flush=True)
+            gap = random.randint(25, 50)
+            for _ in range(gap):
+                if time.time() - start >= delay:
+                    break
+                time.sleep(1)
+    except KeyboardInterrupt:
+        event("stop cancelled")
+        print("\nCancelled. FocusGate stays on. Good call.")
+        return 0
+    event("stop completed (timer)")
+    return halt()
+
+
+def make_pledge():
+    return random.sample(PLEDGE, 22)
+
+
+def words(s):
+    return s.split()
+
+
+def cmd_emergency():
+    need_root()
+    lock = take_lock()  # noqa: F841
+    lines = make_pledge()
+    total = sum(len(words(x)) for x in lines)
+    print("EMERGENCY STOP. To halt FocusGate now, type the pledge below word for word.")
+    print(f"It has {len(lines)} lines and {total} words. Each line must match exactly, including punctuation.")
+    print("Press Ctrl+C to cancel and keep FocusGate on.\n")
+    event("emergency requested")
+    start = None
+    try:
+        for i, line in enumerate(lines, 1):
+            while True:
+                print(f"({i}/{len(lines)}) {line}")
+                if start is None:
+                    start = time.time()
+                typed = input("> ")
+                if words(typed) == words(line):
+                    break
+                print("That doesn't match word for word. Try this line again.\n")
+    except (KeyboardInterrupt, EOFError):
+        event("emergency cancelled")
+        print("\nCancelled. FocusGate stays on.")
+        return 0
+    elapsed = time.time() - start
+    if elapsed < MIN_PLEDGE_SECONDS:
+        event(f"emergency rejected, finished in {int(elapsed)}s")
+        print(f"\nThat took {int(elapsed)} seconds. The pledge is supposed to take at least 3 minutes, "
+              "so slow down and mean it. Run `sudo focusgate emergency` to try again.")
+        return 1
+    event(f"emergency completed in {int(elapsed)}s")
+    return halt()
+
+
+def cmd_start():
+    need_root()
+    try:
+        os.remove(TOKEN)
+    except FileNotFoundError:
+        pass
+    event("started manually")
+    return run("systemctl", "start", "focusgate")
+
+
+def cmd_status():
+    rc = run("systemctl", "status", "focusgate", "--no-pager")
+    if os.path.exists(TOKEN):
+        print("\nHalted by request. It returns after the next reboot (or run `sudo focusgate start`).")
+    return rc
+
+
+COMMANDS = {"status": cmd_status, "start": cmd_start, "stop": cmd_stop, "emergency": cmd_emergency}
+
+if __name__ == "__main__":
+    name = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if name not in COMMANDS:
+        sys.exit("usage: focusgate status|start|stop|emergency")
+    sys.exit(COMMANDS[name]())

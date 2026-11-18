@@ -11,10 +11,10 @@ id focusgate &>/dev/null || useradd --system --home-dir /var/lib/focusgate --cre
 
 mkdir -p /opt/focus-gate
 [ -x /opt/focus-gate/venv/bin/mitmdump ] || { python3 -m venv /opt/focus-gate/venv; /opt/focus-gate/venv/bin/pip install -q mitmproxy; }
-install -m 755 -o root -g root "$SRC/fw.sh" /opt/focus-gate/fw.sh
+install -m 755 -o root -g root "$SRC/fw.sh" "$SRC/watchdog.sh" /opt/focus-gate/
 install -m 644 -o root -g root "$SRC/gate.py" "$SRC/rules.py" /opt/focus-gate/
 install -m 755 -o root -g root "$SRC/focusgate" /usr/local/bin/focusgate
-install -m 644 "$SRC/focusgate.service" /etc/systemd/system/focusgate.service
+install -m 644 "$SRC/focusgate.service" "$SRC/focusgate-watchdog.service" "$SRC/focusgate-watchdog.timer" /etc/systemd/system/
 
 # Generate the CA as the proxy user, then trust it
 CONF=/var/lib/focusgate/mitmproxy
@@ -41,4 +41,5 @@ done
 systemctl daemon-reload
 systemctl enable focusgate
 systemctl restart focusgate
+systemctl enable --now focusgate-watchdog.timer
 echo "Done. Fully restart your browsers. Check: focusgate status"

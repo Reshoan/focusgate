@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the FocusGate watchdog every few seconds
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=5s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
