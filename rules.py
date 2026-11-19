@@ -59,7 +59,7 @@ RULES = {
             r"^/media/set",
             r"^/video(\.php|s/)",                                # standalone videos
             r"^/[^/]+/reels?/[^/]+",                              # a page's single reel
-            r"^/marketplace/item/",                               # a shared listing
+            r"^/marketplace(/|$)",                                # Marketplace (browse, listings, selling)
             r"^/events/\d+",
             r"^/[^/]+/(posts|videos|photos)/[^/]+",
             r"^/groups/[^/]+/(posts|permalink)/[^/]+",
